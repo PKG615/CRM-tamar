@@ -1,0 +1,91 @@
+# Production-style stack:  db (Postgres) + api (FastAPI) + worker (bulk audits, daily
+# follow-up notifications) + web (nginx: static frontend, proxies /api to the api).
+#
+#   cp .env.example .env      # then fill in the secrets
+#   docker compose up -d --build
+#   open http://localhost:8080
+#
+# Only `web` is published. The database and API are reachable inside the compose
+# network only.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    environment: &backend-env
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-crm}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env (openssl rand -hex 32)}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-6}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      WHATSAPP_API_TOKEN: ${WHATSAPP_API_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-en_US}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@example.com}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:${WEB_PORT:-8080}}
+      CRON_SECRET: ${CRON_SECRET:-}
+      FOLLOWUP_SWEEP_HOUR: ${FOLLOWUP_SWEEP_HOUR:-8}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      CAMPAIGN_MAX_RECIPIENTS: ${CAMPAIGN_MAX_RECIPIENTS:-1000}
+      CAMPAIGN_DELAY_SECONDS: ${CAMPAIGN_DELAY_SECONDS:-0.3}
+      WEEKLY_REPORT_DAY: ${WEEKLY_REPORT_DAY:-0}
+      WEEKLY_REPORT_HOUR: ${WEEKLY_REPORT_HOUR:-8}
+      TRUST_PROXY_HEADERS: "true"          # we're behind the bundled nginx
+      CORS_ORIGINS: ${CORS_ORIGINS:-}      # same-origin via nginx, so none needed
+      RUN_MIGRATIONS: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *backend-env
+      RUN_MIGRATIONS: "0"                  # the api container owns migrations
+    depends_on:
+      api:
+        condition: service_healthy         # i.e. migrations have finished
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
