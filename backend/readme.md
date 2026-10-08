@@ -7,10 +7,10 @@ set up and run the existing backend on a new developer system.
 
 ---
 
-# 1. Technology Stack
+## 1. Technology Stack
 
 | Technology | Purpose |
-|------------|---------|
+| ------------ | --------- |
 | Python | Backend programming language |
 | FastAPI | REST API framework |
 | Uvicorn | ASGI application server |
@@ -25,7 +25,7 @@ set up and run the existing backend on a new developer system.
 
 ---
 
-# 2. Requirements
+## 2. Requirements
 
 Before starting, install the following:
 
@@ -54,5 +54,4 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 alembic upgrade head
 alembic current
-alembic upgrade head
 uvicorn app.main:app --reload
